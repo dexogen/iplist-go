@@ -73,6 +73,7 @@
     let selectedGroups = new Set<string>();
     let selectedSites = new Set<string>();
     let copied = false;
+    let showAboutModal = false;
     let openSelect: SelectKey | null = null;
     const pathname = location.pathname;
     const basePath = pathname.startsWith('/beta') ? '/beta' : pathname.startsWith('/russia') ? '/russia' : '';
@@ -123,9 +124,10 @@
         }))
         .filter((group) => group.sites.length > 0);
     $: exportURL = buildExportURL(format, data, selectionMode, selectedGroups, selectedSites);
+    $: downloadURL = withDownload(exportURL);
+    $: downloadFilename = `iplist-${apiCategory}-${data}.${fileExtension(format)}`;
     $: totalSites = groups.reduce((sum, group) => sum + group.sites.length, 0);
     $: selectedCount = selectedGroups.size + selectedSites.size;
-    $: isAbout = pathname === `${basePath}/about`;
     $: dnsStatus = runtime.dnsRefresh;
     $: dnsProgress = dnsStatus?.total
         ? Math.max(0, Math.min(100, Math.round((dnsStatus.processed / dnsStatus.total) * 100)))
@@ -209,6 +211,33 @@
         setTimeout(() => (copied = false), 1200);
     }
 
+    function withDownload(url: string) {
+        return `${url}${url.includes('?') ? '&' : '?'}filesave=1`;
+    }
+
+    function fileExtension(currentFormat: string) {
+        switch (currentFormat) {
+            case 'amnezia':
+            case 'json':
+                return 'json';
+            case 'mikrotik':
+                return 'rsc';
+            case 'ipset':
+            case 'nfset':
+                return 'conf';
+            default:
+                return 'txt';
+        }
+    }
+
+    function openAbout() {
+        showAboutModal = true;
+    }
+
+    function closeAbout() {
+        showAboutModal = false;
+    }
+
     function formatTime(value?: string) {
         if (!value) {
             return 'нет данных';
@@ -230,10 +259,10 @@
 
 <svelte:window on:click={() => (openSelect = null)} />
 
-<main class="shell">
+<main class="shell" class:modal-open={showAboutModal}>
     <aside class="sidebar">
         <div class="brand">
-            <div class="mark">IP</div>
+            <img class="mark" src="/favicon.svg" alt="" />
             <div>
                 <strong>iplist-go</strong>
                 <span>{runtime.configSet}</span>
@@ -257,7 +286,7 @@
                 <span class="eyebrow">DNS refresh</span>
                 {#if !dnsStatus.enabled}
                     <strong>Отключено</strong>
-                    <p>Локальное DNS-дополнение не запускается.</p>
+                    <p>Локальный DNS-refresh выключен.</p>
                 {:else if dnsStatus.running}
                     <strong>Обновление {dnsStatus.processed}/{dnsStatus.total}</strong>
                     <p>{dnsStatus.currentSite || 'подготовка'}</p>
@@ -267,9 +296,9 @@
                     </div>
                 {:else}
                     <strong>Ожидание цикла</strong>
-                    <p>последнее: {formatTime(dnsStatus.lastFinishedAt)}</p>
-                    <p>следующее: {formatTime(dnsStatus.nextRunAt)}</p>
-                    <p>добавлено: {dnsStatus.added}</p>
+                    <p>Последнее: {formatTime(dnsStatus.lastFinishedAt)}</p>
+                    <p>Следующее: {formatTime(dnsStatus.nextRunAt)}</p>
+                    <p>Добавлено: {dnsStatus.added} записей</p>
                 {/if}
                 {#if dnsStatus.lastError}
                     <p class="error">{dnsStatus.lastError}</p>
@@ -278,42 +307,25 @@
         {/if}
 
         <nav class="meta" aria-label="Ссылки">
-            <a href={`${basePath}/about`}>О проекте</a>
-            <a href="https://github.com/rekryt/iplist" target="_blank" rel="noreferrer">GitHub</a>
+            <button class="about-button" type="button" on:click={openAbout} aria-label="О проекте" title="О проекте">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 11v5" />
+                    <path d="M12 8h.01" />
+                </svg>
+                <span>О проекте</span>
+            </button>
         </nav>
     </aside>
 
     <section class="workspace">
-        {#if isAbout}
+        <div class:page-blurred={showAboutModal}>
             <header class="topbar">
-                <div>
-                    <h1>О проекте</h1>
-                    <p>Идейный форк iplist на Go + Svelte.</p>
-                </div>
-                <a class="primary" href={basePath || '/'}>К спискам</a>
-            </header>
-
-            <section class="about-card">
-                <p>
-                    Идея и исходная реализация принадлежат проекту
-                    <a href="https://github.com/rekryt/iplist" target="_blank" rel="noreferrer">rekryt/iplist</a>.
-                    Этот форк
-                    <a href="https://github.com/dexogen/iplist" target="_blank" rel="noreferrer">dexogen/iplist</a>
-                    сохраняет JSON-конфиги адресов и локальные иконки, а интерфейс и API обслуживаются одним Go-сервером
-                    с небольшим Svelte-клиентом.
-                </p>
-                <p>
-                    использует совместимые JSON-конфиги, но backend и frontend здесь написаны заново.
-                </p>
-            </section>
-        {:else}
-            <header class="topbar">
-                <div>
-                    <h1>Списки адресов</h1>
-                    <p>{totalSites} сервисов в {groups.length} группах. Данные загружены из локальных JSON-конфигов.</p>
-                </div>
-                <a class="primary" href={exportURL} target="_blank" rel="noreferrer">Экспорт</a>
-            </header>
+            <div>
+                <h1>Списки адресов</h1>
+                <p>{totalSites} сервисов в {groups.length} группах</p>
+            </div>
+        </header>
 
             <section class="controls">
                 <label>
@@ -328,14 +340,14 @@
                             class:active={selectionMode === 'include'}
                             on:click={() => setSelectionMode('include')}
                         >
-                            Включить
+                            Include
                         </button>
                         <button
                             type="button"
                             class:active={selectionMode === 'exclude'}
                             on:click={() => setSelectionMode('exclude')}
                         >
-                            Исключить
+                            Exclude
                         </button>
                     </div>
                 </label>
@@ -402,12 +414,60 @@
             </section>
 
             <section class="export-card">
-                <div>
+                <div class="export-url">
                     <span class="eyebrow">Export URL</span>
                     <code>{exportURL}</code>
                 </div>
+                <div class="export-actions" aria-label="Export actions">
+                    <button
+                        type="button"
+                        class="icon-action"
+                        class:copied
+                        on:click={copyURL}
+                        aria-label={copied ? 'Скопировано' : 'Копировать ссылку'}
+                        title={copied ? 'Скопировано' : 'Копировать'}
+                    >
+                        {#if copied}
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M20 6 9 17l-5-5" />
+                            </svg>
+                        {:else}
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="10" height="10" rx="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+                            </svg>
+                        {/if}
+                    </button>
+                    <a
+                        class="icon-action"
+                        href={downloadURL}
+                        download={downloadFilename}
+                        aria-label="Скачать файл"
+                        title="Скачать"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 3v12" />
+                            <path d="m7 10 5 5 5-5" />
+                            <path d="M5 21h14" />
+                        </svg>
+                    </a>
+                    <a
+                        class="icon-action"
+                        href={exportURL}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Открыть экспорт"
+                        title="Открыть"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M3 12h18" />
+                            <path d="M12 3a14 14 0 0 1 0 18" />
+                            <path d="M12 3a14 14 0 0 0 0 18" />
+                        </svg>
+                    </a>
+                </div>
                 <div class="actions">
-                    <button on:click={copyURL}>{copied ? 'Скопировано' : 'Копировать'}</button>
                     {#if selectedCount > 0}
                         <button class="ghost" on:click={clearSelection}>Сбросить: {selectedCount}</button>
                     {/if}
@@ -454,6 +514,54 @@
                     {/each}
                 </section>
             {/if}
-        {/if}
+        </div>
     </section>
+
+    {#if showAboutModal}
+        <div class="modal-layer">
+            <button
+                class="modal-backdrop"
+                type="button"
+                on:click={closeAbout}
+                aria-label="Закрыть окно О проекте"
+            ></button>
+            <div
+                class="about-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="about-title"
+            >
+                <button class="modal-close" type="button" on:click={closeAbout} aria-label="Закрыть">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m6 6 12 12" />
+                        <path d="m18 6-12 12" />
+                    </svg>
+                </button>
+                <h2 id="about-title">О проекте</h2>
+                <p>
+                    Данный сервис предназначен для сбора и обновления IP-адресов IPv4 и IPv6, а также их CIDR-зон для указанных доменов.
+                </p>
+                <p>
+                    Вы сами можете найти подходящее применение данному сервису по своему усмотрению.
+                </p>
+                <p>
+                    Идея и исходная реализация принадлежат проекту
+                    <a class="repo-link" href="https://github.com/rekryt/iplist" target="_blank" rel="noreferrer">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2.1c-3.3.7-4-1.4-4-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.2c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z" />
+                        </svg>
+                        rekryt/iplist
+                    </a>.
+                    Этот форк
+                    <a class="repo-link" href="https://github.com/dexogen/iplist-go" target="_blank" rel="noreferrer">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2.1c-3.3.7-4-1.4-4-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.2c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z" />
+                        </svg>
+                        dexogen/iplist-go
+                    </a>
+                    использует совместимые JSON-конфиги оригинального проекта, но интерфейс и API написаны с нуля на Go + Svelte.
+                </p>
+            </div>
+        </div>
+    {/if}
 </main>
