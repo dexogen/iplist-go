@@ -1,0 +1,16 @@
+.git
+.github
+.gitlab
+.gitlab-ci.yml
+node_modules
+web/node_modules
+web/dist
+config
+configs
+dumped-configs
+storage
+deploy
+tmp
+package-lock.json
+!web/package-lock.json
+vendor

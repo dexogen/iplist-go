@@ -1,0 +1,15 @@
+{
+  "name": "iplist-go-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "vite": "^6.3.5",
+    "svelte": "^5.34.3"
+  },
+  "devDependencies": {}
+}

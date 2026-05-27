@@ -1,0 +1,23 @@
+services:
+  app:
+    build:
+      context: .
+    environment:
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      IPLIST_DNS_REFRESH_ENABLED: ${IPLIST_DNS_REFRESH_ENABLED:-true}
+      IPLIST_DNS_REFRESH_CRON: "${IPLIST_DNS_REFRESH_CRON:-0 */12 * * *}"
+      IPLIST_DNS_REFRESH_TIMEZONE: ${IPLIST_DNS_REFRESH_TIMEZONE:-UTC}
+      IPLIST_DNS_REFRESH_TIMEOUT: ${IPLIST_DNS_REFRESH_TIMEOUT:-4s}
+      IPLIST_DNS_REFRESH_CONCURRENCY: ${IPLIST_DNS_REFRESH_CONCURRENCY:-8}
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    volumes:
+      - dns-runtime:/app/runtime
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "2"
+
+volumes:
+  dns-runtime:

@@ -1,0 +1,41 @@
+# Local environment
+.env
+
+# Go
+bin/
+coverage/
+*.test
+
+# Web dependencies and build output
+node_modules/
+web/node_modules/
+web/dist/
+
+# Runtime/generated data
+runtime/
+.runtime-backups/
+config/
+configs/
+dumped-configs/
+storage/
+deploy/
+
+# CI systems that do not belong in the public GitHub repo
+.gitlab/
+.gitlab-ci.yml
+
+# Caches and logs
+.cache/
+.npm/
+*.log
+
+# Legacy/local leftovers from the upstream PHP app
+vendor/
+composer.lock
+.phpunit.result.cache
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
