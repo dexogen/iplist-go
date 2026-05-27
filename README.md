@@ -1,4 +1,6 @@
-# iplist-go
+<p align="center">
+  <img src=".github/assets/header.png" alt="iplist-go" width="100%">
+</p>
 
 [![Tests](https://github.com/dexogen/iplist-go/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/dexogen/iplist-go/actions/workflows/test.yml)
 [![Build image](https://github.com/dexogen/iplist-go/actions/workflows/build-image.yml/badge.svg?branch=main)](https://github.com/dexogen/iplist-go/actions/workflows/build-image.yml)
