@@ -105,27 +105,36 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, configSet stri
 
 func (s *Server) apiRoute(requestPath string) (string, string, string, bool) {
 	cleanPath := urlpath.Clean("/" + strings.TrimPrefix(requestPath, "/"))
-	for _, category := range []string{"latest", "beta", "russia"} {
-		prefix := "/api/" + category
-		if cleanPath == prefix {
-			return configSetForCategory(category), prefix, "/", true
-		}
-		if strings.HasPrefix(cleanPath, prefix+"/") {
-			return configSetForCategory(category), prefix, strings.TrimPrefix(cleanPath, prefix), true
-		}
+	if cleanPath == "/api" {
+		return "", "", "", false
 	}
-	return "", "", "", false
+	if !strings.HasPrefix(cleanPath, "/api/") {
+		return "", "", "", false
+	}
+	rest := strings.TrimPrefix(cleanPath, "/api/")
+	category, path, _ := strings.Cut(rest, "/")
+	configSet := configSetForCategory(category)
+	if s.data == nil || s.data.Sets[configSet] == nil {
+		return "", "", "", false
+	}
+	prefix := "/api/" + category
+	if path == "" {
+		return configSet, prefix, "/", true
+	}
+	return configSet, prefix, "/" + path, true
 }
 
 func (s *Server) uiRoute(requestPath string) (string, string) {
 	cleanPath := urlpath.Clean("/" + strings.TrimPrefix(requestPath, "/"))
-	for _, configSet := range []string{"beta", "russia"} {
-		prefix := "/" + configSet
-		if cleanPath == prefix {
-			return configSet, "/"
-		}
-		if strings.HasPrefix(cleanPath, prefix+"/") {
-			return configSet, strings.TrimPrefix(cleanPath, prefix)
+	trimmed := strings.TrimPrefix(cleanPath, "/")
+	if trimmed != "" {
+		first, rest, _ := strings.Cut(trimmed, "/")
+		configSet := configSetForCategory(first)
+		if configSet != "main" && s.data != nil && s.data.Sets[configSet] != nil {
+			if rest == "" {
+				return configSet, "/"
+			}
+			return configSet, "/" + rest
 		}
 	}
 	return "main", cleanPath
@@ -172,7 +181,8 @@ func (s *Server) runtime(w http.ResponseWriter, configSet string) {
 	writeJSON(w, map[string]any{
 		"configSet":  configSet,
 		"dnsRefresh": dnsRefresh,
-		"urls":       portalURLs(),
+		"sets":       s.data.SetInfos,
+		"urls":       portalURLs(s.data.SetInfos),
 	})
 }
 
@@ -237,7 +247,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, data *ConfigSetD
 		if r.URL.Query().Get("filesave") != "" {
 			w.Header().Set("Content-Disposition", `attachment; filename="iplist.txt"`)
 		}
-		_, _ = w.Write([]byte(strings.Join(req.exportValues(sites), "\n")))
+		_, _ = w.Write(joinedLines(req.exportValues(sites)))
 	case "mikrotik":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		if r.URL.Query().Get("filesave") != "" {
@@ -249,13 +259,13 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, data *ConfigSetD
 		if r.URL.Query().Get("filesave") != "" {
 			w.Header().Set("Content-Disposition", `attachment; filename="iplist-ipset.conf"`)
 		}
-		_, _ = w.Write([]byte(strings.Join(ipsetLines(req, sites), "\n")))
+		_, _ = w.Write(joinedLines(ipsetLines(req, sites)))
 	case "nfset":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		if r.URL.Query().Get("filesave") != "" {
 			w.Header().Set("Content-Disposition", `attachment; filename="iplist-nfset.conf"`)
 		}
-		_, _ = w.Write([]byte(strings.Join(nfsetLines(req, sites), "\n")))
+		_, _ = w.Write(joinedLines(nfsetLines(req, sites)))
 	case "amnezia":
 		if r.URL.Query().Get("filesave") != "" {
 			w.Header().Set("Content-Disposition", `attachment; filename="iplist-amnezia.json"`)
@@ -294,13 +304,12 @@ func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-func portalURLs() map[string]string {
-	return map[string]string{
-		"master": "/",
-		"main":   "/",
-		"beta":   "/beta",
-		"russia": "/russia",
+func portalURLs(sets []ConfigSetInfo) map[string]string {
+	output := map[string]string{"master": "/", "main": "/"}
+	for _, set := range sets {
+		output[set.Key] = set.URL
 	}
+	return output
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

@@ -28,7 +28,7 @@ func TestLoadAllConfigSets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, configSet := range []string{"main", "beta", "russia"} {
+	for _, configSet := range []string{"main", "alpha", "beta", "russia"} {
 		if data.Sets[configSet] == nil {
 			t.Fatalf("missing %s config set", configSet)
 		}
@@ -36,10 +36,19 @@ func TestLoadAllConfigSets(t *testing.T) {
 			t.Fatalf("expected sites in %s config set", configSet)
 		}
 	}
+	if strings.Join(data.ConfigSetKeys(), ",") != "main,beta,russia,alpha" {
+		t.Fatalf("config set order = %v", data.ConfigSetKeys())
+	}
 }
 
 func TestAPIRoutesSelectConfigSets(t *testing.T) {
-	server := &Server{}
+	server := &Server{data: &AllData{Sets: map[string]*ConfigSetData{
+		"main":    {},
+		"alpha":   {},
+		"beta":    {},
+		"dexlist": {},
+		"russia":  {},
+	}}}
 	tests := map[string]struct {
 		wantConfigSet string
 		wantPrefix    string
@@ -48,8 +57,10 @@ func TestAPIRoutesSelectConfigSets(t *testing.T) {
 		"/api/latest/":        {"main", "/api/latest", "/"},
 		"/api/latest/catalog": {"main", "/api/latest", "/catalog"},
 		"/api/latest/export":  {"main", "/api/latest", "/export"},
+		"/api/alpha/catalog":  {"alpha", "/api/alpha", "/catalog"},
 		"/api/beta/":          {"beta", "/api/beta", "/"},
 		"/api/beta/export":    {"beta", "/api/beta", "/export"},
+		"/api/dexlist/export": {"dexlist", "/api/dexlist", "/export"},
 		"/api/russia/runtime": {"russia", "/api/russia", "/runtime"},
 	}
 	for path, want := range tests {
@@ -64,15 +75,24 @@ func TestAPIRoutesSelectConfigSets(t *testing.T) {
 }
 
 func TestUIRoutesSelectConfigSets(t *testing.T) {
-	server := &Server{}
+	server := &Server{data: &AllData{Sets: map[string]*ConfigSetData{
+		"main":    {},
+		"alpha":   {},
+		"beta":    {},
+		"dexlist": {},
+		"russia":  {},
+	}}}
 	tests := map[string]struct {
 		wantConfigSet string
 		wantPath      string
 	}{
 		"/":             {"main", "/"},
 		"/about":        {"main", "/about"},
+		"/alpha":        {"alpha", "/"},
+		"/alpha/about":  {"alpha", "/about"},
 		"/beta":         {"beta", "/"},
 		"/beta/about":   {"beta", "/about"},
+		"/dexlist":      {"dexlist", "/"},
 		"/russia":       {"russia", "/"},
 		"/russia/about": {"russia", "/about"},
 	}
@@ -85,10 +105,16 @@ func TestUIRoutesSelectConfigSets(t *testing.T) {
 }
 
 func TestPortalURLsAreRelative(t *testing.T) {
-	got := portalURLs()
+	got := portalURLs([]ConfigSetInfo{
+		{Key: "main", URL: "/"},
+		{Key: "alpha", URL: "/alpha"},
+		{Key: "beta", URL: "/beta"},
+		{Key: "russia", URL: "/russia"},
+	})
 	want := map[string]string{
 		"master": "/",
 		"main":   "/",
+		"alpha":  "/alpha",
 		"beta":   "/beta",
 		"russia": "/russia",
 	}
@@ -179,6 +205,13 @@ func TestExportDeduplicatesValuesAcrossServices(t *testing.T) {
 	want := []string{"198.51.100.0/24", "203.0.113.10/32"}
 	if strings.Join(values, ",") != strings.Join(want, ",") {
 		t.Fatalf("deduplicated values = %v, want %v", values, want)
+	}
+}
+
+func TestTextExportBodyExplainsEmptyResults(t *testing.T) {
+	body := joinedLines(nil)
+	if string(body) != "# no entries for requested export\n" {
+		t.Fatalf("empty text export body = %q", body)
 	}
 }
 
@@ -553,7 +586,7 @@ func TestDNSRuntimeStatusPersistsAcrossRestart(t *testing.T) {
 	})
 
 	restarted := NewDNSRuntimeStore(cfg, logger)
-	if err := restarted.Load(&AllData{Sets: map[string]*ConfigSetData{}}); err != nil {
+	if err := restarted.Load(&AllData{Sets: map[string]*ConfigSetData{"main": {ConfigSet: "main"}}}); err != nil {
 		t.Fatal(err)
 	}
 	got := restarted.Status("main")
@@ -583,7 +616,7 @@ func TestDNSRuntimeStatusClearsRunningStateAfterRestart(t *testing.T) {
 	})
 
 	restarted := NewDNSRuntimeStore(cfg, logger)
-	if err := restarted.Load(&AllData{Sets: map[string]*ConfigSetData{}}); err != nil {
+	if err := restarted.Load(&AllData{Sets: map[string]*ConfigSetData{"main": {ConfigSet: "main"}}}); err != nil {
 		t.Fatal(err)
 	}
 	got := restarted.Status("main")
@@ -751,6 +784,9 @@ func fixtureDataRoot(t *testing.T) string {
 	writeFixtureSite(t, root, "beta", "test", "beta.example", siteConfig{
 		Domains: []string{"beta.example"},
 	})
+	writeFixtureSite(t, root, "alpha", "test", "alpha.example", siteConfig{
+		Domains: []string{"alpha.example"},
+	})
 	writeFixtureSite(t, root, "russia", "test", "russia.example", siteConfig{
 		Domains: []string{"russia.example"},
 	})
@@ -765,6 +801,7 @@ func fixtureDataRoot(t *testing.T) string {
 	icons := map[string]string{
 		"aistudio.google.com": "generic.svg",
 		"autodesk.com":        "generic.svg",
+		"alpha.example":       "generic.svg",
 		"beta.example":        "generic.svg",
 		"russia.example":      "generic.svg",
 	}

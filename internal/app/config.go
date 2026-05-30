@@ -95,12 +95,13 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 }
 
 func normalizeConfigSet(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "beta":
-		return "beta"
-	case "russia":
-		return "russia"
-	default:
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", "latest", "master":
 		return "main"
 	}
+	if validConfigSetKey(value) && !reservedConfigSetKey(value) {
+		return value
+	}
+	return "main"
 }

@@ -17,6 +17,7 @@ import (
 type DNSRuntimeStore struct {
 	mu        sync.RWMutex
 	root      string
+	enabled   bool
 	logger    *slog.Logger
 	additions map[string]map[string]DNSRuntimeAdditions
 	status    map[string]DNSRefreshStatus
@@ -49,18 +50,19 @@ func NewDNSRuntimeStore(cfg Config, logger *slog.Logger) *DNSRuntimeStore {
 	}
 	store := &DNSRuntimeStore{
 		root:      root,
+		enabled:   cfg.DNSRefreshEnabled,
 		logger:    logger,
 		additions: map[string]map[string]DNSRuntimeAdditions{},
 		status:    map[string]DNSRefreshStatus{},
-	}
-	for _, configSet := range configSets {
-		store.status[configSet] = DNSRefreshStatus{Enabled: cfg.DNSRefreshEnabled}
 	}
 	return store
 }
 
 func (s *DNSRuntimeStore) Load(data *AllData) error {
-	for _, configSet := range configSets {
+	for _, configSet := range data.ConfigSetKeys() {
+		if _, ok := s.status[configSet]; !ok {
+			s.status[configSet] = DNSRefreshStatus{Enabled: s.enabled}
+		}
 		if err := s.loadSet(configSet, data.Sets[configSet]); err != nil {
 			return err
 		}
@@ -133,7 +135,11 @@ func (s *DNSRuntimeStore) Status(configSet string) DNSRefreshStatus {
 
 func (s *DNSRuntimeStore) SetStatus(configSet string, update func(DNSRefreshStatus) DNSRefreshStatus) {
 	s.mu.Lock()
-	status := update(s.status[configSet])
+	status := s.status[configSet]
+	if _, ok := s.status[configSet]; !ok {
+		status.Enabled = s.enabled
+	}
+	status = update(status)
 	s.status[configSet] = status
 	s.mu.Unlock()
 

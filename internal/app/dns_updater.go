@@ -85,7 +85,7 @@ func (u *DNSUpdater) loop(ctx context.Context, schedule *cronSchedule, location 
 }
 
 func (u *DNSUpdater) runAllSets(ctx context.Context) {
-	for _, configSet := range configSets {
+	for _, configSet := range u.data.ConfigSetKeys() {
 		if err := u.runSet(ctx, configSet); err != nil {
 			u.logger.Warn("dns refresh set failed", "configSet", configSet, "error", err)
 			u.store.SetStatus(configSet, func(status DNSRefreshStatus) DNSRefreshStatus {
@@ -165,7 +165,7 @@ func (u *DNSUpdater) runSet(ctx context.Context, configSet string) error {
 }
 
 func (u *DNSUpdater) setStatusForAll(update func(DNSRefreshStatus) DNSRefreshStatus) {
-	for _, configSet := range configSets {
+	for _, configSet := range u.data.ConfigSetKeys() {
 		u.store.SetStatus(configSet, update)
 	}
 }

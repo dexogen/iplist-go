@@ -4,7 +4,17 @@
     type Runtime = {
         configSet: string;
         urls: Record<string, string>;
+        sets?: ConfigSet[];
         dnsRefresh?: DNSRefreshStatus;
+    };
+
+    type ConfigSet = {
+        key: string;
+        dir: string;
+        label: string;
+        url: string;
+        apiBase: string;
+        isDefault: boolean;
     };
 
     type DNSRefreshStatus = {
@@ -75,10 +85,7 @@
     let copied = false;
     let showAboutModal = false;
     let openSelect: SelectKey | null = null;
-    const pathname = location.pathname;
-    const basePath = pathname.startsWith('/beta') ? '/beta' : pathname.startsWith('/russia') ? '/russia' : '';
-    const apiCategory = pathname.startsWith('/beta') ? 'beta' : pathname.startsWith('/russia') ? 'russia' : 'latest';
-    const apiBase = `/api/${apiCategory}`;
+    let apiBase = initialAPIBase();
 
     onMount(() => {
         let stopped = false;
@@ -101,10 +108,20 @@
     });
 
     async function loadPortal() {
-        const [runtimeResponse, catalogResponse] = await Promise.all([
+        let [runtimeResponse, catalogResponse] = await Promise.all([
             fetch(`${apiBase}/runtime`),
             fetch(`${apiBase}/catalog`),
         ]);
+        if ((!runtimeResponse.ok || !catalogResponse.ok) && apiBase !== '/api/latest') {
+            apiBase = '/api/latest';
+            [runtimeResponse, catalogResponse] = await Promise.all([
+                fetch(`${apiBase}/runtime`),
+                fetch(`${apiBase}/catalog`),
+            ]);
+        }
+        if (!runtimeResponse.ok || !catalogResponse.ok) {
+            throw new Error('failed to load portal data');
+        }
         runtime = await runtimeResponse.json();
         const catalog = await catalogResponse.json();
         groups = catalog.groups;
@@ -125,13 +142,24 @@
         .filter((group) => group.sites.length > 0);
     $: exportURL = buildExportURL(format, data, selectionMode, selectedGroups, selectedSites);
     $: downloadURL = withDownload(exportURL);
-    $: downloadFilename = `iplist-${apiCategory}-${data}.${fileExtension(format)}`;
+    $: downloadFilename = `iplist-${runtime.configSet}-${data}.${fileExtension(format)}`;
     $: totalSites = groups.reduce((sum, group) => sum + group.sites.length, 0);
     $: selectedCount = selectedGroups.size + selectedSites.size;
     $: dnsStatus = runtime.dnsRefresh;
+    $: portalLinks = runtime.sets?.length
+        ? runtime.sets
+        : [{ key: 'main', dir: 'master', label: 'Master', url: '/', apiBase: '/api/latest', isDefault: true }];
     $: dnsProgress = dnsStatus?.total
         ? Math.max(0, Math.min(100, Math.round((dnsStatus.processed / dnsStatus.total) * 100)))
         : 0;
+
+    function initialAPIBase() {
+        const firstSegment = location.pathname.split('/').filter(Boolean)[0];
+        if (!firstSegment || firstSegment === 'main' || firstSegment === 'master') {
+            return '/api/latest';
+        }
+        return `/api/${encodeURIComponent(firstSegment)}`;
+    }
 
     function buildExportURL(
         currentFormat: string,
@@ -250,11 +278,16 @@
         }).format(new Date(value));
     }
 
-    const portalLinks = [
-        { key: 'main', label: 'Основной', icon: 'M' },
-        { key: 'beta', label: 'Бета', icon: 'β' },
-        { key: 'russia', label: 'Россия', icon: 'RU' },
-    ];
+    function versionIcon(set: ConfigSet) {
+        return set.dir.slice(0, 2).toUpperCase();
+    }
+
+    function showVersionDivider(index: number, set: ConfigSet) {
+        if (index === 0) {
+            return false;
+        }
+        return !['master', 'beta', 'russia'].includes(set.dir);
+    }
 </script>
 
 <svelte:window on:click={() => (openSelect = null)} />
@@ -270,12 +303,15 @@
         </div>
 
         <nav class="versions" aria-label="Версии">
-            {#each portalLinks as link}
+            {#each portalLinks as link, index}
+                {#if showVersionDivider(index, link)}
+                    <span class="version-divider" aria-hidden="true"></span>
+                {/if}
                 <a
-                    class:active={runtime.configSet === link.key || (runtime.configSet === 'main' && link.key === 'main')}
-                    href={runtime.urls[link.key] || '/'}
+                    class:active={runtime.configSet === link.key}
+                    href={runtime.urls[link.key] || link.url}
                 >
-                    <span class="version-icon">{link.icon}</span>
+                    <span class="version-icon">{versionIcon(link)}</span>
                     {link.label}
                 </a>
             {/each}

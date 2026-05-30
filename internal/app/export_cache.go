@@ -53,7 +53,7 @@ func NewExportCache(cfg Config, data *AllData, logger *slog.Logger) *ExportCache
 }
 
 func (c *ExportCache) RefreshAll() error {
-	for _, configSet := range configSets {
+	for _, configSet := range c.data.ConfigSetKeys() {
 		if err := c.RefreshSet(configSet); err != nil {
 			return err
 		}
@@ -192,5 +192,8 @@ func emptyExportExcludes() map[string]map[string]struct{} {
 }
 
 func joinedLines(values []string) []byte {
+	if len(values) == 0 {
+		return []byte("# no entries for requested export\n")
+	}
 	return []byte(strings.Join(values, "\n"))
 }

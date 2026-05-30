@@ -30,8 +30,19 @@ type GroupSummary struct {
 	Sites []SiteSummary `json:"sites"`
 }
 
+type ConfigSetInfo struct {
+	Key       string `json:"key"`
+	Dir       string `json:"dir"`
+	Label     string `json:"label"`
+	URL       string `json:"url"`
+	APIBase   string `json:"apiBase"`
+	IsDefault bool   `json:"isDefault"`
+}
+
 type AllData struct {
 	Sets        map[string]*ConfigSetData
+	SetOrder    []string
+	SetInfos    []ConfigSetInfo
 	Icons       map[string]string
 	Runtime     *DNSRuntimeStore
 	ExportCache *ExportCache

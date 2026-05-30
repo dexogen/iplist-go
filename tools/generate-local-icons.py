@@ -32,8 +32,9 @@ BRAND_ALIASES = {
 
 def configured_sites(config_root: Path) -> list[str]:
     sites: set[str] = set()
-    for path in config_root.glob("*/*/*.json"):
-        sites.add(path.stem)
+    for path in config_root.rglob("*.json"):
+        if len(path.relative_to(config_root).parts) >= 3:
+            sites.add(path.stem)
     return sorted(sites)
 
 

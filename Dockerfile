@@ -1,13 +1,15 @@
-FROM alpine:3.20 AS config-build
+FROM python:3.12-alpine AS config-build
 
 ARG CONFIG_ARCHIVE_URL=https://github.com/dexogen/iplist-go-sidecar/archive/refs/heads/main.tar.gz
 
 RUN apk add --no-cache ca-certificates curl tar
 WORKDIR /tmp/sidecar
+COPY tools/merge-custom-configs.py /usr/local/bin/merge-custom-configs.py
 RUN curl -fsSL "$CONFIG_ARCHIVE_URL" | tar -xz --strip-components=1 \
     && test -d config \
     && mkdir -p /out \
-    && cp -a config /out/config
+    && cp -a config /out/config \
+    && python3 /usr/local/bin/merge-custom-configs.py --config-root /out/config --custom-root custom
 
 FROM node:22-alpine AS web-build
 

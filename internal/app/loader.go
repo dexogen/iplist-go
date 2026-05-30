@@ -9,24 +9,28 @@ import (
 	"strings"
 )
 
-var configSets = []string{"main", "beta", "russia"}
-
 func LoadAllData(cfg Config) (*AllData, error) {
 	icons, err := loadIcons(filepath.Join(cfg.DataRoot, "storage", "icons.json"))
 	if err != nil {
 		return nil, err
 	}
+	sets, err := discoverConfigSets(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	all := &AllData{
-		Sets:  map[string]*ConfigSetData{},
-		Icons: icons,
+		Sets:     map[string]*ConfigSetData{},
+		SetInfos: sets,
+		Icons:    icons,
 	}
-	for _, configSet := range configSets {
-		data, err := loadConfigSet(cfg, configSet, icons)
+	for _, set := range sets {
+		data, err := loadConfigSet(cfg, set, icons)
 		if err != nil {
 			return nil, err
 		}
-		all.Sets[configSet] = data
+		all.Sets[set.Key] = data
+		all.SetOrder = append(all.SetOrder, set.Key)
 	}
 	return all, nil
 }
@@ -36,11 +40,20 @@ func LoadData(cfg Config) (*ConfigSetData, error) {
 	if err != nil {
 		return nil, err
 	}
-	return loadConfigSet(cfg, cfg.ConfigSet, icons)
+	sets, err := discoverConfigSets(cfg)
+	if err != nil {
+		return nil, err
+	}
+	for _, set := range sets {
+		if set.Key == cfg.ConfigSet {
+			return loadConfigSet(cfg, set, icons)
+		}
+	}
+	return nil, fmt.Errorf("missing config set %s", cfg.ConfigSet)
 }
 
-func loadConfigSet(cfg Config, configSet string, icons map[string]string) (*ConfigSetData, error) {
-	configDir := filepath.Join(cfg.DataRoot, "config", configDirName(configSet))
+func loadConfigSet(cfg Config, set ConfigSetInfo, icons map[string]string) (*ConfigSetData, error) {
+	configDir := filepath.Join(cfg.DataRoot, "config", set.Dir)
 
 	var sites []Site
 	err := filepath.WalkDir(configDir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -106,17 +119,145 @@ func loadConfigSet(cfg Config, configSet string, icons map[string]string) (*Conf
 	})
 
 	return &ConfigSetData{
-		ConfigSet: configSet,
+		ConfigSet: set.Key,
 		Sites:     sites,
 		Groups:    buildGroups(sites),
 	}, nil
 }
 
-func configDirName(configSet string) string {
-	if configSet == "main" {
-		return "master"
+func discoverConfigSets(cfg Config) ([]ConfigSetInfo, error) {
+	configRoot := filepath.Join(cfg.DataRoot, "config")
+	entries, err := os.ReadDir(configRoot)
+	if err != nil {
+		return nil, err
 	}
-	return configSet
+
+	var sets []ConfigSetInfo
+	seen := map[string]string{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := entry.Name()
+		if strings.HasPrefix(dir, ".") {
+			continue
+		}
+		key := configSetKeyFromDir(dir)
+		if !validConfigSetKey(key) || reservedConfigSetKey(key) {
+			return nil, fmt.Errorf("invalid config set directory %s", dir)
+		}
+		if previous, ok := seen[key]; ok {
+			return nil, fmt.Errorf("config set directories %s and %s both map to %s", previous, dir, key)
+		}
+		seen[key] = dir
+		sets = append(sets, ConfigSetInfo{
+			Key:       key,
+			Dir:       dir,
+			Label:     configSetLabel(dir),
+			URL:       configSetURL(key),
+			APIBase:   configSetAPIBase(key),
+			IsDefault: key == "main",
+		})
+	}
+	sort.Slice(sets, func(i, j int) bool {
+		leftRank := configSetSortRank(sets[i].Key)
+		rightRank := configSetSortRank(sets[j].Key)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return sets[i].Key < sets[j].Key
+	})
+	if len(sets) == 0 {
+		return nil, fmt.Errorf("no config sets found in %s", configRoot)
+	}
+	return sets, nil
+}
+
+func configSetKeyFromDir(dir string) string {
+	if dir == "master" {
+		return "main"
+	}
+	return dir
+}
+
+func configSetSortRank(key string) int {
+	switch key {
+	case "main":
+		return 0
+	case "beta":
+		return 1
+	case "russia":
+		return 2
+	default:
+		return 100
+	}
+}
+
+func configSetLabel(dir string) string {
+	parts := strings.FieldsFunc(dir, func(char rune) bool {
+		return char == '-' || char == '_' || char == '.'
+	})
+	if len(parts) == 0 {
+		return dir
+	}
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[index] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
+}
+
+func configSetURL(key string) string {
+	if key == "main" {
+		return "/"
+	}
+	return "/" + key
+}
+
+func configSetAPIBase(key string) string {
+	if key == "main" {
+		return "/api/latest"
+	}
+	return "/api/" + key
+}
+
+func validConfigSetKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for index, char := range key {
+		ok := char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-' || char == '_' || char == '.'
+		if !ok {
+			return false
+		}
+		if index == 0 && !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func reservedConfigSetKey(key string) bool {
+	switch key {
+	case "api", "assets", "favicon", "latest", "master":
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *AllData) ConfigSetKeys() []string {
+	if len(d.SetOrder) > 0 {
+		return append([]string(nil), d.SetOrder...)
+	}
+	keys := make([]string, 0, len(d.Sets))
+	for key := range d.Sets {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func loadIcons(path string) (map[string]string, error) {
