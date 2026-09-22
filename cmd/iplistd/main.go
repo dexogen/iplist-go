@@ -17,25 +17,7 @@ func main() {
 	cfg := app.ConfigFromEnv()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel()}))
 
-	data, err := app.LoadAllData(cfg)
-	if err != nil {
-		logger.Error("load data", "error", err)
-		os.Exit(1)
-	}
-	dnsStore := app.NewDNSRuntimeStore(cfg, logger)
-	if err := dnsStore.Load(data); err != nil {
-		logger.Error("load dns runtime", "error", err)
-		os.Exit(1)
-	}
-	data.Runtime = dnsStore
-	exportCache := app.NewExportCache(cfg, data, logger)
-	data.ExportCache = exportCache
-	if err := exportCache.RefreshAll(); err != nil {
-		logger.Error("build export cache", "error", err)
-		os.Exit(1)
-	}
-
-	handler := app.NewServer(cfg, data, logger)
+	handler := app.NewLiveServer(cfg, logger)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
@@ -44,10 +26,10 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	app.NewDNSUpdater(cfg, data, dnsStore, logger).Start(ctx)
+	handler.Start(ctx)
 
 	go func() {
-		logger.Info("iplist-go started", "addr", cfg.HTTPAddr, "sets", len(data.Sets))
+		logger.Info("iplist-go started", "addr", cfg.HTTPAddr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server", "error", err)
 			stop()

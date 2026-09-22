@@ -40,12 +40,17 @@ type ConfigSetInfo struct {
 }
 
 type AllData struct {
-	Sets        map[string]*ConfigSetData
-	SetOrder    []string
-	SetInfos    []ConfigSetInfo
-	Icons       map[string]string
-	Runtime     *DNSRuntimeStore
-	ExportCache *ExportCache
+	Sets          map[string]*ConfigSetData
+	SetOrder      []string
+	SetInfos      []ConfigSetInfo
+	Icons         map[string]string
+	Runtime       *DNSRuntimeStore
+	ExportCache   *ExportCache
+	Sources       map[string]SnapshotDescriptor
+	Revision      string
+	RefreshStatus func() SnapshotRefreshStatus
+	DNSStatus     func(string) DNSRefreshStatus
+	MergedSets    map[string]*ConfigSetData
 }
 
 type ConfigSetData struct {

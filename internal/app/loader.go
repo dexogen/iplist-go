@@ -262,6 +262,9 @@ func (d *AllData) ConfigSetKeys() []string {
 
 func loadIcons(path string) (map[string]string, error) {
 	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]string{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

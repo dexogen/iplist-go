@@ -1,16 +1,3 @@
-FROM python:3.12-alpine AS config-build
-
-ARG CONFIG_ARCHIVE_URL=https://github.com/dexogen/iplist-go-sidecar/archive/refs/heads/main.tar.gz
-
-RUN apk add --no-cache ca-certificates curl tar
-WORKDIR /tmp/sidecar
-COPY tools/merge-custom-configs.py /usr/local/bin/merge-custom-configs.py
-RUN curl -fsSL "$CONFIG_ARCHIVE_URL" | tar -xz --strip-components=1 \
-    && test -d config \
-    && mkdir -p /out \
-    && cp -a config /out/config \
-    && python3 /usr/local/bin/merge-custom-configs.py --config-root /out/config --custom-root custom
-
 FROM node:22-alpine AS web-build
 
 WORKDIR /src/web
@@ -23,10 +10,12 @@ FROM python:3.12-alpine AS icon-build
 
 WORKDIR /src
 COPY tools/generate-local-icons.py ./tools/generate-local-icons.py
-COPY --from=config-build /out/config ./config
+ARG SNAPSHOT_URL=https://github.com/dexogen/iplist-go-sidecar/releases/download/data/manifest.json
+COPY tools/download-bootstrap.py ./tools/download-bootstrap.py
+RUN python3 tools/download-bootstrap.py --url "$SNAPSHOT_URL" --output /src/bootstrap
 RUN python3 tools/generate-local-icons.py --repo-root /src
 
-FROM golang:1.23-alpine AS api-build
+FROM golang:1.27-alpine AS api-build
 
 WORKDIR /src
 COPY go.mod ./
@@ -35,13 +24,13 @@ COPY cmd/ ./cmd/
 COPY --from=web-build /src/web/dist/ ./internal/app/web/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/iplistd ./cmd/iplistd
 
-FROM alpine:3.20
+FROM alpine:3.22
 
-RUN adduser -D -H iplist
+RUN apk add --no-cache ca-certificates && adduser -D -H iplist
 WORKDIR /app
 RUN mkdir -p /app/runtime/dns && chown -R iplist:iplist /app/runtime
 COPY --from=api-build /out/iplistd /usr/local/bin/iplistd
-COPY --from=config-build /out/config ./config/
+COPY --from=icon-build /src/bootstrap ./bootstrap/
 COPY --from=icon-build /src/storage ./storage/
 USER iplist
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import gzip
 import re
 import urllib.error
 import urllib.parse
@@ -32,6 +33,12 @@ BRAND_ALIASES = {
 
 def configured_sites(config_root: Path) -> list[str]:
     sites: set[str] = set()
+    bootstrap = config_root.parent / "bootstrap"
+    if (bootstrap / "manifest.json").is_file():
+        manifest = json.loads((bootstrap / "manifest.json").read_text())
+        for descriptor in manifest["sets"].values():
+            payload = json.loads(gzip.decompress((bootstrap / descriptor["path"]).read_bytes()))
+            sites.update(site["name"] for site in payload["sites"])
     for path in config_root.rglob("*.json"):
         if len(path.relative_to(config_root).parts) >= 3:
             sites.add(path.stem)

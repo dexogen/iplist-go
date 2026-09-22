@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,9 +26,10 @@ type DNSRuntimeStore struct {
 }
 
 type DNSRuntimeAdditions struct {
-	IP4       []string `json:"ip4"`
-	IP6       []string `json:"ip6"`
-	UpdatedAt string   `json:"updatedAt,omitempty"`
+	IP4         []string `json:"ip4"`
+	IP6         []string `json:"ip6"`
+	UpdatedAt   string   `json:"updatedAt,omitempty"`
+	DomainsHash string   `json:"domainsHash,omitempty"`
 }
 
 type DNSRefreshStatus struct {
@@ -37,6 +40,8 @@ type DNSRefreshStatus struct {
 	Total          int    `json:"total"`
 	Resolved       int    `json:"resolved"`
 	Added          int    `json:"added"`
+	Failed         int    `json:"failed"`
+	Retained       int    `json:"retained"`
 	LastStartedAt  string `json:"lastStartedAt,omitempty"`
 	LastFinishedAt string `json:"lastFinishedAt,omitempty"`
 	NextRunAt      string `json:"nextRunAt,omitempty"`
@@ -77,10 +82,10 @@ func (s *DNSRuntimeStore) loadSet(configSet string, data *ConfigSetData) error {
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	known := map[string]struct{}{}
+	known := map[string]string{}
 	if data != nil {
 		for _, site := range data.Sites {
-			known[site.Name] = struct{}{}
+			known[site.Name] = domainsHash(site.Domains)
 		}
 	}
 	return filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -102,10 +107,17 @@ func (s *DNSRuntimeStore) loadSet(configSet string, data *ConfigSetData) error {
 		if err := json.Unmarshal(content, &additions); err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
+		if additions.DomainsHash != "" && additions.DomainsHash != known[name] {
+			return nil
+		}
+		if old, ok := s.additions[configSet][name]; ok && old.UpdatedAt > additions.UpdatedAt {
+			return nil
+		}
 		s.setMemory(configSet, name, DNSRuntimeAdditions{
-			IP4:       normalizeStrings(additions.IP4),
-			IP6:       normalizeStrings(additions.IP6),
-			UpdatedAt: additions.UpdatedAt,
+			IP4:         normalizeStrings(additions.IP4),
+			IP6:         normalizeStrings(additions.IP6),
+			UpdatedAt:   additions.UpdatedAt,
+			DomainsHash: additions.DomainsHash,
 		})
 		return nil
 	})
@@ -118,9 +130,10 @@ func (s *DNSRuntimeStore) Additions(configSet string) map[string]DNSRuntimeAddit
 	output := make(map[string]DNSRuntimeAdditions, len(source))
 	for name, additions := range source {
 		output[name] = DNSRuntimeAdditions{
-			IP4:       append([]string(nil), additions.IP4...),
-			IP6:       append([]string(nil), additions.IP6...),
-			UpdatedAt: additions.UpdatedAt,
+			IP4:         append([]string(nil), additions.IP4...),
+			IP6:         append([]string(nil), additions.IP6...),
+			UpdatedAt:   additions.UpdatedAt,
+			DomainsHash: additions.DomainsHash,
 		}
 	}
 	return output
@@ -152,8 +165,7 @@ func (s *DNSRuntimeStore) SetAdditions(configSet string, site Site, additions DN
 	additions.IP4 = normalizeStrings(additions.IP4)
 	additions.IP6 = normalizeStrings(additions.IP6)
 	additions.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	s.setMemory(configSet, site.Name, additions)
-
+	additions.DomainsHash = domainsHash(site.Domains)
 	path := filepath.Join(s.root, configSet, filepath.FromSlash(site.Group), site.Name+".json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -163,11 +175,16 @@ func (s *DNSRuntimeStore) SetAdditions(configSet string, site Site, additions DN
 		return err
 	}
 	content = append(content, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, content, 0o644); err != nil {
+	if err := atomicWrite(path, content); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	s.setMemory(configSet, site.Name, additions)
+	return nil
+}
+
+func domainsHash(domains []string) string {
+	digest := sha256.Sum256([]byte(strings.Join(normalizeStrings(domains), "\n")))
+	return hex.EncodeToString(digest[:])
 }
 
 func (s *DNSRuntimeStore) statusPath(configSet string) string {
@@ -212,11 +229,7 @@ func (s *DNSRuntimeStore) saveStatus(configSet string, status DNSRefreshStatus) 
 		return err
 	}
 	content = append(content, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, content, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicWrite(path, content)
 }
 
 func (s *DNSRuntimeStore) deriveStatusFromAdditions(configSet string, data *ConfigSetData) {
@@ -282,6 +295,9 @@ func (s *DNSRuntimeStore) setMemory(configSet, siteName string, additions DNSRun
 }
 
 func (d *AllData) MergedConfigSet(configSet string) *ConfigSetData {
+	if cached := d.MergedSets[configSet]; cached != nil {
+		return cached
+	}
 	base := d.Sets[configSet]
 	if base == nil {
 		return nil
@@ -306,11 +322,6 @@ func (d *AllData) MergedSites(configSet string) []Site {
 	output := make([]Site, 0, len(base.Sites))
 	for _, site := range base.Sites {
 		next := site
-		next.Domains = append([]string(nil), site.Domains...)
-		next.IP4 = append([]string(nil), site.IP4...)
-		next.IP6 = append([]string(nil), site.IP6...)
-		next.CIDR4 = append([]string(nil), site.CIDR4...)
-		next.CIDR6 = append([]string(nil), site.CIDR6...)
 		next.DynamicCounts = nil
 		next.DynamicTotal = 0
 

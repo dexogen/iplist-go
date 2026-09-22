@@ -6,6 +6,8 @@
         urls: Record<string, string>;
         sets?: ConfigSet[];
         dnsRefresh?: DNSRefreshStatus;
+        source?: { status: string; last_success_at: string };
+        snapshotRefresh?: { running: boolean; lastCheckedAt?: string; nextRunAt?: string; lastError?: string };
     };
 
     type ConfigSet = {
@@ -76,6 +78,7 @@
     let runtime: Runtime = { configSet: 'main', urls: {} };
     let groups: Group[] = [];
     let loading = true;
+    let loadError = '';
     let query = '';
     let format = 'unifi';
     let data = 'ipv4';
@@ -92,9 +95,13 @@
         let timer: number | undefined;
 
         async function refresh() {
-            await loadPortal();
-            if (!stopped) {
-                timer = window.setTimeout(refresh, 5000);
+            try {
+                await loadPortal();
+                loadError = '';
+            } catch {
+                loadError = 'Не удалось получить данные. Повторная попытка через несколько секунд.';
+            } finally {
+                if (!stopped) timer = window.setTimeout(refresh, 5000);
             }
         }
 
@@ -317,6 +324,21 @@
             {/each}
         </nav>
 
+        {#if runtime.source?.last_success_at}
+            <section class="dns-panel" aria-label="Обновление списков">
+                <span class="eyebrow">Списки адресов</span>
+                <strong>{runtime.snapshotRefresh?.running ? 'Проверка обновлений' : runtime.source.status === 'ok' ? 'Актуальный снимок' : 'Сохраненная версия'}</strong>
+                <p>Данные получены: {formatTime(runtime.source.last_success_at)}</p>
+                <p>Следующая проверка: {formatTime(runtime.snapshotRefresh?.nextRunAt)}</p>
+                {#if runtime.source.status !== 'ok'}
+                    <p class="error">Часть источников не обновилась. Сохранены последние проверенные данные.</p>
+                {/if}
+                {#if runtime.snapshotRefresh?.lastError}
+                    <p class="error">Проверка обновлений не удалась. Используется сохраненный снимок.</p>
+                {/if}
+            </section>
+        {/if}
+
         {#if dnsStatus}
             <section class="dns-panel">
                 <span class="eyebrow">DNS refresh</span>
@@ -360,6 +382,7 @@
             <div>
                 <h1>Списки адресов</h1>
                 <p>{totalSites} сервисов в {groups.length} группах</p>
+                {#if loadError}<p role="status">{loadError}</p>{/if}
             </div>
         </header>
 

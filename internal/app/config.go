@@ -23,6 +23,15 @@ type Config struct {
 	DNSRefreshIPv4           bool
 	DNSRefreshIPv6           bool
 	ExportCacheDir           string
+	SnapshotURL              string
+	SnapshotDir              string
+	SnapshotInterval         time.Duration
+	SnapshotTimeout          time.Duration
+	SnapshotMaxAge           time.Duration
+	DNSRefreshOnStart        bool
+	DNSUseSourceServers      bool
+	DNSServers               []string
+	DNSStaleAfter            time.Duration
 
 	Debug bool
 }
@@ -41,6 +50,15 @@ func ConfigFromEnv() Config {
 		DNSRefreshIPv4:           envBool("IPLIST_DNS_REFRESH_IP4", true),
 		DNSRefreshIPv6:           envBool("IPLIST_DNS_REFRESH_IP6", true),
 		ExportCacheDir:           env("IPLIST_EXPORT_CACHE_DIR", "runtime/export-cache"),
+		SnapshotURL:              env("IPLIST_SNAPSHOT_URL", "https://github.com/dexogen/iplist-go-sidecar/releases/download/data/manifest.json"),
+		SnapshotDir:              env("IPLIST_SNAPSHOT_DIR", "runtime/snapshots"),
+		SnapshotInterval:         envDuration("IPLIST_SNAPSHOT_INTERVAL", 30*time.Minute),
+		SnapshotTimeout:          envDuration("IPLIST_SNAPSHOT_TIMEOUT", 3*time.Minute),
+		SnapshotMaxAge:           envDuration("IPLIST_SNAPSHOT_MAX_AGE", 48*time.Hour),
+		DNSRefreshOnStart:        envBool("IPLIST_DNS_REFRESH_ON_START", true),
+		DNSUseSourceServers:      envBool("IPLIST_DNS_USE_SOURCE_SERVERS", false),
+		DNSServers:               strings.FieldsFunc(env("IPLIST_DNS_SERVERS", ""), func(r rune) bool { return r == ',' || r == ' ' }),
+		DNSStaleAfter:            envDuration("IPLIST_DNS_STALE_AFTER", 7*24*time.Hour),
 		Debug:                    strings.EqualFold(env("DEBUG", "false"), "true"),
 	}
 }

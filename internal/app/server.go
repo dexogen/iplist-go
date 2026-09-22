@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	urlpath "path"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, configSet string, prefix string, path string) {
+	if source, ok := s.data.Sources[configSet]; ok {
+		status := source.Status
+		if s.cfg.SnapshotMaxAge > 0 && time.Since(source.LastSuccessAt) > s.cfg.SnapshotMaxAge {
+			status = "stale"
+		}
+		w.Header().Set("X-IPList-Snapshot", source.SHA256)
+		w.Header().Set("X-IPList-Source-Status", status)
+		w.Header().Set("X-IPList-Source-Updated-At", source.LastSuccessAt.UTC().Format(time.RFC3339))
+	}
 	switch {
 	case path == "/runtime":
 		s.runtime(w, configSet)
@@ -76,6 +86,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, configSet stri
 	case path == "/" && r.URL.Query().Has("format"):
 		if r.URL.Query().Get("format") == "json" && r.URL.Query().Get("data") == "runtime" {
 			s.runtime(w, configSet)
+			return
+		}
+		if s.serveCachedExport(w, r, configSet) {
 			return
 		}
 		merged := s.data.MergedConfigSet(configSet)
@@ -92,6 +105,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, configSet stri
 		}
 		writeJSON(w, s.catalog(merged, prefix))
 	case path == "/export":
+		if s.serveCachedExport(w, r, configSet) {
+			return
+		}
 		merged := s.data.MergedConfigSet(configSet)
 		if merged == nil {
 			http.NotFound(w, r)
@@ -178,11 +194,24 @@ func (s *Server) runtime(w http.ResponseWriter, configSet string) {
 	if s.data.Runtime != nil {
 		dnsRefresh = s.data.Runtime.Status(configSet)
 	}
+	if s.data.DNSStatus != nil {
+		dnsRefresh = s.data.DNSStatus(configSet)
+	}
+	var refresh SnapshotRefreshStatus
+	if s.data.RefreshStatus != nil {
+		refresh = s.data.RefreshStatus()
+	}
+	source := s.data.Sources[configSet]
+	if s.cfg.SnapshotMaxAge > 0 && time.Since(source.LastSuccessAt) > s.cfg.SnapshotMaxAge {
+		source.Status = "stale"
+	}
 	writeJSON(w, map[string]any{
-		"configSet":  configSet,
-		"dnsRefresh": dnsRefresh,
-		"sets":       s.data.SetInfos,
-		"urls":       portalURLs(s.data.SetInfos),
+		"configSet":       configSet,
+		"dnsRefresh":      dnsRefresh,
+		"sets":            s.data.SetInfos,
+		"urls":            portalURLs(s.data.SetInfos),
+		"snapshotRefresh": refresh,
+		"source":          source,
 	})
 }
 
@@ -220,17 +249,8 @@ func groupsWithPrefix(groups []GroupSummary, prefix string) []GroupSummary {
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request, data *ConfigSetData, prefix string) {
 	req := newExportRequest(r)
-	if s.data.ExportCache != nil {
-		if cached, ok := s.data.ExportCache.Get(data.ConfigSet, req); ok {
-			w.Header().Set("Content-Type", cached.ContentType)
-			w.Header().Set("X-IPList-Export-Cache", "hit")
-			w.Header().Set("X-IPList-Export-Generated-At", cached.GeneratedAt.Format(time.RFC3339))
-			if r.URL.Query().Get("filesave") != "" {
-				w.Header().Set("Content-Disposition", `attachment; filename="`+cached.Filename+`"`)
-			}
-			http.ServeFile(w, r, cached.Path)
-			return
-		}
+	if s.serveCachedExport(w, r, data.ConfigSet) {
+		return
 	}
 	sites := req.selectSites(data.Sites)
 
@@ -296,6 +316,12 @@ func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
 	}
 	icon = filepath.Base(icon)
 	path := filepath.Join(s.cfg.DataRoot, "storage", "icons", icon)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#2563eb"/><circle cx="16" cy="16" r="9" fill="none" stroke="white" stroke-width="2"/><path d="M7 16h18M16 7v18" stroke="white" stroke-width="2"/></svg>`))
+		return
+	}
 
 	if contentType := mime.TypeByExtension(filepath.Ext(icon)); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -317,4 +343,21 @@ func writeJSON(w http.ResponseWriter, value any) {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(value)
+}
+
+func (s *Server) serveCachedExport(w http.ResponseWriter, r *http.Request, configSet string) bool {
+	req := newExportRequest(r)
+	if s.data.ExportCache != nil {
+		if cached, ok := s.data.ExportCache.Get(configSet, req); ok {
+			w.Header().Set("Content-Type", cached.ContentType)
+			w.Header().Set("X-IPList-Export-Cache", "hit")
+			w.Header().Set("X-IPList-Export-Generated-At", cached.GeneratedAt.Format(time.RFC3339))
+			if r.URL.Query().Get("filesave") != "" {
+				w.Header().Set("Content-Disposition", `attachment; filename="`+cached.Filename+`"`)
+			}
+			http.ServeFile(w, r, cached.Path)
+			return true
+		}
+	}
+	return false
 }

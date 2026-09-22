@@ -16,12 +16,19 @@ type DNSUpdater struct {
 	data   *AllData
 	store  *DNSRuntimeStore
 	logger *slog.Logger
+	lookup func(context.Context, string, string) ([]net.IP, error)
+	memoMu sync.Mutex
+	memo   map[string]resolvedDomain
 }
 
 type resolvedDomain struct {
-	ip4 []string
-	ip6 []string
-	ok  bool
+	ip4                  []string
+	ip6                  []string
+	ok                   bool
+	complete4, complete6 bool
+	negative4, negative6 bool
+	failed, retained     int
+	err                  error
 }
 
 func NewDNSUpdater(cfg Config, data *AllData, store *DNSRuntimeStore, logger *slog.Logger) *DNSUpdater {
@@ -111,6 +118,8 @@ func (u *DNSUpdater) runSet(ctx context.Context, configSet string) error {
 		status.Total = len(base.Sites)
 		status.Resolved = 0
 		status.Added = 0
+		status.Failed = 0
+		status.Retained = 0
 		status.LastStartedAt = started
 		status.LastFinishedAt = ""
 		status.LastError = ""
@@ -128,12 +137,15 @@ func (u *DNSUpdater) runSet(ctx context.Context, configSet string) error {
 			status.Processed = i
 			return status
 		})
-		resolved := u.resolveSite(ctx, site)
+		resolved := u.resolveSite(ctx, configSet, site)
+		if resolved.err != nil {
+			return resolved.err
+		}
 		additions := DNSRuntimeAdditions{
 			IP4: filterAdditionalIPs(site.IP4, site.CIDR4, resolved.ip4),
 			IP6: filterAdditionalIPs(site.IP6, site.CIDR6, resolved.ip6),
 		}
-		if resolved.ok || len(site.Domains) == 0 {
+		{
 			if err := u.store.SetAdditions(configSet, site, additions); err != nil {
 				return err
 			}
@@ -143,6 +155,8 @@ func (u *DNSUpdater) runSet(ctx context.Context, configSet string) error {
 			status.Processed = i + 1
 			status.Resolved += resolved.count()
 			status.Added += added
+			status.Failed += resolved.failed
+			status.Retained += resolved.retained
 			return status
 		})
 	}
@@ -154,6 +168,9 @@ func (u *DNSUpdater) runSet(ctx context.Context, configSet string) error {
 		status.Processed = len(base.Sites)
 		status.Total = len(base.Sites)
 		status.LastFinishedAt = finished
+		if status.Failed > 0 {
+			status.LastError = "some DNS lookups failed; unexpired previous answers retained"
+		}
 		return status
 	})
 	if u.data.ExportCache != nil {
@@ -168,81 +185,6 @@ func (u *DNSUpdater) setStatusForAll(update func(DNSRefreshStatus) DNSRefreshSta
 	for _, configSet := range u.data.ConfigSetKeys() {
 		u.store.SetStatus(configSet, update)
 	}
-}
-
-func (u *DNSUpdater) resolveSite(ctx context.Context, site Site) resolvedDomain {
-	domains := normalizeResolveDomains(site.Domains)
-	if len(domains) == 0 {
-		return resolvedDomain{ok: true}
-	}
-
-	concurrency := u.cfg.DNSRefreshConcurrency
-	if concurrency > len(domains) {
-		concurrency = len(domains)
-	}
-	jobs := make(chan string)
-	results := make(chan resolvedDomain)
-	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for domain := range jobs {
-				results <- u.resolveDomain(ctx, domain, site.DNS)
-			}
-		}()
-	}
-	go func() {
-		defer close(jobs)
-		for _, domain := range domains {
-			select {
-			case <-ctx.Done():
-				return
-			case jobs <- domain:
-			}
-		}
-	}()
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	var output resolvedDomain
-	for result := range results {
-		output.ip4 = append(output.ip4, result.ip4...)
-		output.ip6 = append(output.ip6, result.ip6...)
-		output.ok = output.ok || result.ok
-	}
-	output.ip4 = normalizeStrings(output.ip4)
-	output.ip6 = normalizeStrings(output.ip6)
-	return output
-}
-
-func (u *DNSUpdater) resolveDomain(parent context.Context, domain string, servers []string) resolvedDomain {
-	ctx, cancel := context.WithTimeout(parent, u.cfg.DNSRefreshResolveTimeout)
-	defer cancel()
-
-	resolver := net.DefaultResolver
-	if len(servers) > 0 {
-		resolver = resolverForServers(servers)
-	}
-
-	var output resolvedDomain
-	var ok atomic.Bool
-	if u.cfg.DNSRefreshIPv4 {
-		if ips, err := resolver.LookupIP(ctx, "ip4", domain); err == nil {
-			output.ip4 = append(output.ip4, parseResolvedIPs(ips, true)...)
-			ok.Store(true)
-		}
-	}
-	if u.cfg.DNSRefreshIPv6 {
-		if ips, err := resolver.LookupIP(ctx, "ip6", domain); err == nil {
-			output.ip6 = append(output.ip6, parseResolvedIPs(ips, false)...)
-			ok.Store(true)
-		}
-	}
-	output.ok = ok.Load()
-	return output
 }
 
 func resolverForServers(servers []string) *net.Resolver {
