@@ -354,9 +354,16 @@ func filterAdditionalIPs(baseIPs []string, baseCIDRs []string, candidates []stri
 	}
 	output := make([]string, 0, len(candidates))
 	seen := map[string]struct{}{}
+	sharedAddressSpace := netip.MustParsePrefix("100.64.0.0/10")
 	for _, candidate := range candidates {
 		addr, err := netip.ParseAddr(candidate)
 		if err != nil {
+			continue
+		}
+		addr = addr.Unmap()
+		// Public service domains can return internal or blocking addresses. They
+		// must not turn LAN destinations into VPN routes through DNS enrichment.
+		if !addr.IsGlobalUnicast() || addr.IsPrivate() || sharedAddressSpace.Contains(addr) {
 			continue
 		}
 		normalized := addr.String()

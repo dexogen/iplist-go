@@ -1,4 +1,4 @@
-FROM node:22-alpine AS web-build
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web-build
 
 WORKDIR /src/web
 COPY web/package*.json ./
@@ -6,7 +6,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM python:3.12-alpine AS icon-build
+FROM --platform=$BUILDPLATFORM python:3.12-alpine AS icon-build
 
 WORKDIR /src
 COPY tools/generate-local-icons.py ./tools/generate-local-icons.py
@@ -15,14 +15,16 @@ COPY tools/download-bootstrap.py ./tools/download-bootstrap.py
 RUN python3 tools/download-bootstrap.py --url "$SNAPSHOT_URL" --output /src/bootstrap
 RUN python3 tools/generate-local-icons.py --repo-root /src
 
-FROM golang:1.27-alpine AS api-build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS api-build
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod ./
 COPY internal/ ./internal/
 COPY cmd/ ./cmd/
 COPY --from=web-build /src/web/dist/ ./internal/app/web/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/iplistd ./cmd/iplistd
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/iplistd ./cmd/iplistd
 
 FROM alpine:3.22
 
